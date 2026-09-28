@@ -90,6 +90,10 @@ def send():
                   smtp_code=result.smtp_code, smtp_reply=result.smtp_reply)
     if result.retry_reason:
         fields["retry_reason"] = result.retry_reason
+    if result.retry_error:
+        fields["retry_error"] = result.retry_error
+    if result.error:
+        fields["error"] = result.error
     if result.outcome == "sent":
         return _finish(200, {"status": "sent", "message_id": message_id},
                        outcome="sent", reason="sent", duration_ms=elapsed_ms(), **fields)

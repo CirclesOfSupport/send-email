@@ -32,18 +32,31 @@ class SendResult:
     smtp_code: int | None = None
     smtp_reply: str | None = None
     retry_reason: str | None = None   # why the first attempt failed, when a second was made
+    error: str | None = None          # network/TLS error text of the final failure, if any
+    retry_error: str | None = None    # network/TLS error text of the first attempt, if retried
 
 
 class _Transient(Exception):
-    def __init__(self, reason, code=None, reply=None):
+    def __init__(self, reason, code=None, reply=None, error=None):
         super().__init__(reason)
-        self.reason, self.code, self.reply = reason, code, reply
+        self.reason, self.code, self.reply, self.error = reason, code, reply, error
 
 
 class _Final(Exception):
-    def __init__(self, reason, code=None, reply=None):
+    def __init__(self, reason, code=None, reply=None, error=None):
         super().__init__(reason)
-        self.reason, self.code, self.reply = reason, code, reply
+        self.reason, self.code, self.reply, self.error = reason, code, reply, error
+
+
+def _error_text(exc) -> str:
+    """The network/TLS error as Python reports it (type and message), for the log.
+    Carries no message content: these errors are raised before or outside DATA."""
+    parts, seen = [], 0
+    while exc is not None and seen < 3:
+        parts.append(f"{type(exc).__name__}: {exc}")
+        exc = exc.__cause__ or exc.__context__
+        seen += 1
+    return " <- ".join(parts)[:300]
 
 
 def build_message(cfg, req) -> tuple[EmailMessage, str]:
@@ -164,14 +177,15 @@ def _attempt(cfg, msg: EmailMessage, recipients, clock: _Clock, tls_context, smt
     except smtplib.SMTPResponseException as exc:
         raise _classify(exc.smtp_code, exc.smtp_error, stage)
     except ssl.SSLCertVerificationError as exc:
-        raise _Final("tls_certificate_invalid", None, _reply_text(exc.verify_message or exc))
+        raise _Final("tls_certificate_invalid", None, _reply_text(exc.verify_message or exc),
+                     error=_error_text(exc))
     except (TimeoutError, OSError, smtplib.SMTPException) as exc:
         # socket.timeout is TimeoutError; ConnectionError and ssl.SSLError are OSError.
         # smtplib wraps a read timeout in SMTPServerDisconnected, so look at the cause.
         kind = "timeout" if _is_timeout(exc) else "connection"
         if stage == "data":
-            raise _Final(f"unknown_after_data_{kind}")
-        raise _Transient(f"{kind}_at_{stage}")
+            raise _Final(f"unknown_after_data_{kind}", error=_error_text(exc))
+        raise _Transient(f"{kind}_at_{stage}", error=_error_text(exc))
     finally:
         if smtp is not None:
             try:
@@ -193,19 +207,23 @@ def send(cfg, msg: EmailMessage, recipients, deadline: float,
         if clock.remaining() <= 0:
             break
         attempts += 1
-        retry_reason = first.reason if attempts > 1 and first is not None else None
+        retried = attempts > 1 and first is not None
+        retry_reason = first.reason if retried else None
+        retry_error = first.error if retried else None
         try:
             _attempt(cfg, msg, recipients, clock, tls_context, smtp_class)
-            return SendResult("sent", "sent", attempts, retry_reason=retry_reason)
+            return SendResult("sent", "sent", attempts, retry_reason=retry_reason,
+                              retry_error=retry_error)
         except _Final as exc:
             return SendResult("failed", exc.reason, attempts, exc.code, exc.reply,
-                              retry_reason=retry_reason)
+                              retry_reason=retry_reason, error=exc.error, retry_error=retry_error)
         except _Transient as exc:
             last = exc
             if first is None:
                 first = exc
     if last is None:
         return SendResult("failed", "timeout_before_attempt", attempts)
-    retry_reason = first.reason if attempts > 1 and first is not None else None
+    retried = attempts > 1 and first is not None
     return SendResult("failed", last.reason, attempts, last.code, last.reply,
-                      retry_reason=retry_reason)
+                      retry_reason=first.reason if retried else None, error=last.error,
+                      retry_error=first.error if retried else None)

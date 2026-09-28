@@ -539,14 +539,19 @@ def test_data_refusal(env, app_client, smtp_server, client_tls):
     assert len(handler.mail_from) == 1
 
 
-def test_connection_refused_is_failure(env, app_client, client_tls):
+def test_connection_refused_is_failure(env, app_client, client_tls, capsys):
     env(_free_port(), SEND_DEADLINE_SECONDS="5", SMTP_TIMEOUT_SECONDS="1")
     r = post(app_client)
     assert r.status_code == 502
     assert r.get_json()["reason"] == "connection_at_connect"
+    [line] = send_lines(log_lines(capsys))
+    # both attempts' network errors are named in the log, and never reach the caller
+    assert "ConnectionRefusedError" in line["error"]
+    assert "ConnectionRefusedError" in line["retry_error"]
+    assert "error" not in r.get_json() and "retry_error" not in r.get_json()
 
 
-def test_silent_server_times_out_inside_deadline(env, app_client, client_tls):
+def test_silent_server_times_out_inside_deadline(env, app_client, client_tls, capsys):
     listener = socket.socket()
     listener.bind(("127.0.0.1", 0))
     listener.listen(5)
@@ -571,6 +576,8 @@ def test_silent_server_times_out_inside_deadline(env, app_client, client_tls):
         assert r.status_code == 504
         assert "timeout" in r.get_json()["reason"]
         assert took < 3.0
+        [line] = send_lines(log_lines(capsys))
+        assert "timed out" in line["error"]
     finally:
         stop.set()
         t.join()
@@ -624,7 +631,7 @@ def test_logs_never_carry_body_subject_or_address(env, app_client, smtp_server, 
     for record in sends:
         assert set(record) <= {"severity", "event", "message", "outcome", "reason", "kind",
                                "recipient_count", "recipient_domains", "attempts",
-                               "retry_reason", "duration_ms", "smtp_code", "smtp_reply", "message_id",
+                               "retry_reason", "retry_error", "error", "duration_ms", "smtp_code", "smtp_reply", "message_id",
                                "http_status"}
         assert record["message"].startswith(("SEND_EMAIL_SENT", "SEND_EMAIL_REFUSED",
                                              "SEND_EMAIL_FAILED"))
