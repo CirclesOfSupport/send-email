@@ -1,6 +1,6 @@
 """One JSON line per call, on stdout, which Cloud Logging stores as jsonPayload.
 
-What a line may carry is fixed here: the kind, the environment, recipient DOMAINS,
+What a line may carry is fixed here: the kind, recipient DOMAINS,
 counts, timing, the outcome and the relay's own reply. Never the body, the
 subject, a full address, or anything about a subscriber.
 """
@@ -14,7 +14,7 @@ SEVERITY = {"sent": "INFO", "refused": "WARNING", "failed": "ERROR"}
 MARKER = {"sent": "SEND_EMAIL_SENT", "refused": "SEND_EMAIL_REFUSED", "failed": "SEND_EMAIL_FAILED"}
 
 ALLOWED_FIELDS = (
-    "outcome", "reason", "kind", "environment", "recipient_count", "recipient_domains",
+    "outcome", "reason", "kind", "recipient_count", "recipient_domains",
     "attempts", "duration_ms", "smtp_code", "smtp_reply", "message_id", "http_status",
 )
 

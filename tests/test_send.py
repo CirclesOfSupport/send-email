@@ -185,7 +185,7 @@ def env(monkeypatch):
             monkeypatch.delenv(key, raising=False)
 
     def set_env(port=25, **overrides):
-        values = {"ENVIRONMENT": "live", "WEBHOOK_SECRET": SECRET, "SMTP_HOST": "localhost",
+        values = {"WEBHOOK_SECRET": SECRET, "SMTP_HOST": "localhost",
                   "SMTP_PORT": str(port), "SMTP_AUTH_MODE": "ip"}
         values.update(overrides)
         for k, v in values.items():
@@ -278,7 +278,7 @@ def test_health_is_open_and_reveals_nothing(env, app_client):
     r = app_client.get("/health")
     assert r.status_code == 200
     body = r.get_json()
-    assert body == {"status": "ok", "environment": "live", "auth_mode": "ip"}
+    assert body == {"status": "ok", "auth_mode": "ip"}
     assert SECRET not in r.get_data(as_text=True)
 
 
@@ -352,52 +352,18 @@ def test_subject_line_breaks_cannot_add_headers(env, app_client, smtp_server, cl
     assert handler.rcpts == [LOGAN]
 
 
-# =========================================================================== 3. to whom, per environment
+# =========================================================================== 3. one service, no environment switch
 
-def test_dev_sends_to_allowlisted(env, app_client, smtp_server, client_tls):
+@pytest.mark.parametrize("extra", [{}, {"ENVIRONMENT": "dev", "RECIPIENT_ALLOWLIST": LOGAN},
+                                   {"ENVIRONMENT": "anything"}])
+def test_no_environment_or_allowlist_switch(env, app_client, smtp_server, client_tls, extra):
+    """One service: an ENVIRONMENT or RECIPIENT_ALLOWLIST variable changes nothing."""
     handler, port = smtp_server()
-    env(port, ENVIRONMENT="dev", RECIPIENT_ALLOWLIST=f"{LOGAN.upper()}, other@example.org")
-    assert post(app_client).status_code == 200
-    assert handler.rcpts == [LOGAN]
-
-
-def test_dev_refuses_whole_message_if_any_recipient_off_list(env, app_client, smtp_server,
-                                                             client_tls, capsys):
-    handler, port = smtp_server()
-    env(port, ENVIRONMENT="dev", RECIPIENT_ALLOWLIST=LOGAN)
+    env(port, **extra)
     r = post(app_client, payload(to=f"{LOGAN},{OTHER}"))
-    assert r.status_code == 403
-    assert r.get_json() == {"status": "refused", "reason": "recipient_not_allowed", "not_allowed": 1}
-    assert handler.mail_from == [] and handler.rcpts == []
-    [line] = send_lines(log_lines(capsys))
-    assert line["reason"] == "recipient_not_allowed"
-    assert line["recipient_domains"] == ["counseling.example.com", "example.org"]
-
-
-@pytest.mark.parametrize("allow", [None, "", " , "])
-def test_dev_with_empty_allowlist_refuses_everything(env, app_client, smtp_server, client_tls, allow):
-    handler, port = smtp_server()
-    env(port, ENVIRONMENT="dev", RECIPIENT_ALLOWLIST=allow)
-    r = post(app_client)
-    assert r.status_code == 500 and r.get_json()["reason"] == "misconfigured"
-    assert handler.mail_from == []
-
-
-@pytest.mark.parametrize("value", [None, "", "prod", "LIVE", "Dev", "staging"])
-def test_unknown_environment_refuses_everything(env, app_client, smtp_server, client_tls, value):
-    handler, port = smtp_server()
-    env(port, ENVIRONMENT=value, RECIPIENT_ALLOWLIST=LOGAN)
-    r = post(app_client)
-    assert r.status_code == 500
-    assert handler.mail_from == []
-    assert app_client.get("/health").status_code == 500
-
-
-def test_live_ignores_allowlist(env, app_client, smtp_server, client_tls):
-    handler, port = smtp_server()
-    env(port, ENVIRONMENT="live", RECIPIENT_ALLOWLIST=LOGAN)
-    assert post(app_client, payload(to=OTHER)).status_code == 200
-    assert handler.rcpts == [OTHER]
+    assert r.status_code == 200
+    assert handler.rcpts == [LOGAN, OTHER]
+    assert app_client.get("/health").get_json() == {"status": "ok", "auth_mode": "ip"}
 
 
 # =========================================================================== 4. how it sends
@@ -615,13 +581,13 @@ def test_stall_after_data_is_unknown_and_not_retried(env, app_client, smtp_serve
 
 
 def test_default_deadline_is_under_textit_timeout():
-    cfg = config.load_config({"ENVIRONMENT": "live", "WEBHOOK_SECRET": "s", "SMTP_AUTH_MODE": "ip"})
+    cfg = config.load_config({"WEBHOOK_SECRET": "s", "SMTP_AUTH_MODE": "ip"})
     assert cfg.ok and cfg.send_deadline == 12.0 and cfg.smtp_timeout == 5.0
 
 
 @pytest.mark.parametrize("value", ["14", "15", "0", "-1", "abc"])
 def test_deadline_at_or_over_textit_timeout_is_misconfiguration(value):
-    cfg = config.load_config({"ENVIRONMENT": "live", "WEBHOOK_SECRET": "s", "SMTP_AUTH_MODE": "ip",
+    cfg = config.load_config({"WEBHOOK_SECRET": "s", "SMTP_AUTH_MODE": "ip",
                               "SEND_DEADLINE_SECONDS": value})
     assert not cfg.ok
 
@@ -630,9 +596,9 @@ def test_deadline_at_or_over_textit_timeout_is_misconfiguration(value):
 
 def test_logs_never_carry_body_subject_or_address(env, app_client, smtp_server, client_tls, capsys):
     handler, port = smtp_server()
-    env(port, ENVIRONMENT="dev", RECIPIENT_ALLOWLIST=LOGAN)
+    env(port)
     post(app_client)                                          # sent
-    post(app_client, payload(to=OTHER))                       # refused: allowlist
+    post(app_client, payload(to=OTHER, subject=None))         # refused: bad request (subject)
     post(app_client, payload(to="bad address"))               # refused: bad request
     post(app_client, secret="wrong")                          # refused: unauthorized
     handler.rcpt_script = [550]
@@ -646,14 +612,13 @@ def test_logs_never_carry_body_subject_or_address(env, app_client, smtp_server, 
         assert needle not in out, needle
     for record in sends:
         assert set(record) <= {"severity", "event", "message", "outcome", "reason", "kind",
-                               "environment", "recipient_count", "recipient_domains", "attempts",
+                               "recipient_count", "recipient_domains", "attempts",
                                "duration_ms", "smtp_code", "smtp_reply", "message_id",
                                "http_status"}
         assert record["message"].startswith(("SEND_EMAIL_SENT", "SEND_EMAIL_REFUSED",
                                              "SEND_EMAIL_FAILED"))
         assert record["severity"] == {"sent": "INFO", "refused": "WARNING",
                                       "failed": "ERROR"}[record["outcome"]]
-        assert record["environment"] == "dev"
         assert isinstance(record["duration_ms"], int)
     assert [r["outcome"] for r in sends] == ["sent", "refused", "refused", "refused", "failed"]
     assert sends[0]["recipient_domains"] == ["example.org"]

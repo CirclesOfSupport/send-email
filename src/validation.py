@@ -105,7 +105,3 @@ def parse_send_request(payload, max_recipients: int) -> SendRequest:
 
     return SendRequest(recipients=recipients, subject=subject, body=body, kind=kind)
 
-
-def recipients_not_allowed(recipients, allowlist: frozenset) -> int:
-    """How many recipients are off the allowlist (0 means all allowed)."""
-    return sum(1 for r in recipients if r.lower() not in allowlist)

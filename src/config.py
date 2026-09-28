@@ -15,7 +15,6 @@ import re
 from dataclasses import dataclass, field
 from typing import Mapping
 
-ENVIRONMENTS = ("dev", "live")
 AUTH_MODES = ("ip", "password")
 
 # TextIt gives a webhook 15 seconds. The service must answer before that, so the
@@ -35,9 +34,7 @@ def is_valid_address(value: str) -> bool:
 
 @dataclass(frozen=True)
 class Config:
-    environment: str
     webhook_secret: str
-    allowlist: frozenset
     smtp_host: str
     smtp_port: int
     smtp_auth_mode: str
@@ -72,22 +69,9 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
     env = os.environ if env is None else env
     problems: list[str] = []
 
-    environment = env.get("ENVIRONMENT", "").strip()
-    if environment not in ENVIRONMENTS:
-        problems.append("ENVIRONMENT must be 'dev' or 'live'")
-
     webhook_secret = env.get("WEBHOOK_SECRET", "")
     if not webhook_secret.strip():
         problems.append("WEBHOOK_SECRET is not set")
-
-    allowlist = frozenset(
-        a.strip().lower() for a in re.split(r"[,;\s]+", env.get("RECIPIENT_ALLOWLIST", "")) if a.strip()
-    )
-    if environment == "dev":
-        if not allowlist:
-            problems.append("RECIPIENT_ALLOWLIST is empty (required when ENVIRONMENT is dev)")
-        elif not all(is_valid_address(a) for a in allowlist):
-            problems.append("RECIPIENT_ALLOWLIST holds a value that is not an email address")
 
     smtp_host = env.get("SMTP_HOST", "smtp-relay.gmail.com").strip()
     smtp_port = _number(env, "SMTP_PORT", 587, int, problems)
@@ -126,9 +110,7 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
         problems.append("SMTP_TIMEOUT_SECONDS must be above 0 and not above SEND_DEADLINE_SECONDS")
 
     return Config(
-        environment=environment,
         webhook_secret=webhook_secret,
-        allowlist=allowlist,
         smtp_host=smtp_host,
         smtp_port=smtp_port,
         smtp_auth_mode=smtp_auth_mode,

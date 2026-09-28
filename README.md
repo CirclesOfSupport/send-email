@@ -36,7 +36,6 @@ Header `X-Webhook-Secret: <WEBHOOK_SECRET>` and a JSON body:
 | 200 | `sent` | The relay accepted the message. `message_id` is returned. |
 | 400 | `refused` / `bad_request` | A field is missing or invalid; `field` and `detail` say which. |
 | 401 | `refused` / `unauthorized` | Missing or wrong secret. |
-| 403 | `refused` / `recipient_not_allowed` | DEV only: a recipient is not on the allowlist. Nothing is sent. |
 | 500 | `refused` / `misconfigured` | The service's own configuration is incomplete. Nothing is sent. |
 | 502 | `failed` / `relay_…`, `connection_…`, `starttls_unavailable`, `tls_certificate_invalid` | The relay refused, or could not be reached safely. |
 | 504 | `failed` / `…timeout…` | No answer in time. `unknown_after_data_…` means the relay may have the message. |
@@ -45,7 +44,7 @@ Anything other than 200 takes the flow's Failure exit.
 
 ## `GET /health`
 
-`{"status": "ok", "environment": "dev"|"live", "auth_mode": "ip"|"password"}`, or 500
+`{"status": "ok", "auth_mode": "ip"|"password"}`, or 500
 `misconfigured`. No secrets, no addresses.
 
 ## How a send works
@@ -71,29 +70,26 @@ Anything other than 200 takes the flow's Failure exit.
 ## Logs and the failure count
 
 Each call writes one JSON line: `event=send_email`, `outcome` (`sent` / `refused` / `failed`),
-`reason`, `kind`, `environment`, `recipient_count`, `recipient_domains` (domains only), `attempts`,
+`reason`, `kind`, `recipient_count`, `recipient_domains` (domains only), `attempts`,
 `duration_ms`, `smtp_code`, `smtp_reply` (the relay's own reply text), `message_id`, `http_status`,
 and a `message` starting `SEND_EMAIL_SENT`, `SEND_EMAIL_REFUSED` or `SEND_EMAIL_FAILED`. Severity is
 INFO / WARNING / ERROR. **The body, the subject and full addresses are never logged.**
 
-A log-based metric on these lines, labelled by `outcome`, `kind` and `environment`, is the
+A log-based metric on these lines, labelled by `outcome` and `kind`, is the
 failure count our alerting watches. `message_id` finds the message in the Admin console's Email
 Log Search.
 
-## DEV and LIVE
+## Testing a flow against it
 
-Two services from the same image. `send-email-dev` runs with `ENVIRONMENT=dev` and refuses any
-recipient not on `RECIPIENT_ALLOWLIST`, so a flow under test can't reach a counselor. `send-email`
-runs with `ENVIRONMENT=live`. Each has its own service account and its own secret. Any other
-`ENVIRONMENT` value refuses every send.
+There is one service. A new or changed email is exercised from a DRAFT flow addressed only to
+ourselves, and reaches counselors only when that flow is promoted to LIVE — the same review that
+governs every flow change. The service doesn't need to know which flow is calling it.
 
 ## Configuration
 
 | Variable | Default | |
 |---|---|---|
-| `ENVIRONMENT` | — | `dev` or `live`; required |
 | `WEBHOOK_SECRET` | — | required; from Secret Manager |
-| `RECIPIENT_ALLOWLIST` | — | required for `dev`; comma-separated addresses |
 | `SMTP_AUTH_MODE` | — | `ip` or `password`; required |
 | `SMTP_USERNAME`, `SMTP_PASSWORD` | — | `password` mode only; the password from Secret Manager |
 | `SMTP_HOST` / `SMTP_PORT` | `smtp-relay.gmail.com` / `587` | |
@@ -110,8 +106,8 @@ Secrets never live in this repository. They reach the container from Secret Mana
 ## Build, deploy, test
 
 Pushes to `main` build and deploy `send-email` through its Cloud Build trigger (the trigger runs
-its own inline build; `cloudbuild.yaml` is kept for structure and manual builds). `send-email-dev`
-is deployed from the same image.
+its own inline build; `cloudbuild.yaml` is kept for structure and manual builds). Settings and the
+secret live on the Cloud Run service, not here.
 
 ```
 pip install -r requirements-dev.txt
