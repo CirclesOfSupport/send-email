@@ -15,7 +15,8 @@ MARKER = {"sent": "SEND_EMAIL_SENT", "refused": "SEND_EMAIL_REFUSED", "failed": 
 
 ALLOWED_FIELDS = (
     "outcome", "reason", "kind", "recipient_count", "recipient_domains",
-    "attempts", "duration_ms", "smtp_code", "smtp_reply", "message_id", "http_status",
+    "attempts", "retry_reason", "duration_ms", "smtp_code", "smtp_reply", "message_id",
+    "http_status",
 )
 
 

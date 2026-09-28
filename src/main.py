@@ -88,6 +88,8 @@ def send():
 
     fields = dict(who, attempts=result.attempts, message_id=message_id,
                   smtp_code=result.smtp_code, smtp_reply=result.smtp_reply)
+    if result.retry_reason:
+        fields["retry_reason"] = result.retry_reason
     if result.outcome == "sent":
         return _finish(200, {"status": "sent", "message_id": message_id},
                        outcome="sent", reason="sent", duration_ms=elapsed_ms(), **fields)

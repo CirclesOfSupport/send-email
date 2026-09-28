@@ -31,6 +31,7 @@ class SendResult:
     attempts: int
     smtp_code: int | None = None
     smtp_reply: str | None = None
+    retry_reason: str | None = None   # why the first attempt failed, when a second was made
 
 
 class _Transient(Exception):
@@ -185,19 +186,26 @@ def send(cfg, msg: EmailMessage, recipients, deadline: float,
     clock = _Clock(deadline, cfg.smtp_timeout)
     attempts = 0
     last: _Transient | None = None
+    first: _Transient | None = None
     while attempts < MAX_ATTEMPTS:
         if attempts > 0 and clock.remaining() < RETRY_MIN_SECONDS:
             break
         if clock.remaining() <= 0:
             break
         attempts += 1
+        retry_reason = first.reason if attempts > 1 and first is not None else None
         try:
             _attempt(cfg, msg, recipients, clock, tls_context, smtp_class)
-            return SendResult("sent", "sent", attempts)
+            return SendResult("sent", "sent", attempts, retry_reason=retry_reason)
         except _Final as exc:
-            return SendResult("failed", exc.reason, attempts, exc.code, exc.reply)
+            return SendResult("failed", exc.reason, attempts, exc.code, exc.reply,
+                              retry_reason=retry_reason)
         except _Transient as exc:
             last = exc
+            if first is None:
+                first = exc
     if last is None:
         return SendResult("failed", "timeout_before_attempt", attempts)
-    return SendResult("failed", last.reason, attempts, last.code, last.reply)
+    retry_reason = first.reason if attempts > 1 and first is not None else None
+    return SendResult("failed", last.reason, attempts, last.code, last.reply,
+                      retry_reason=retry_reason)

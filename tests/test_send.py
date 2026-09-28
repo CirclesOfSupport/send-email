@@ -497,9 +497,10 @@ def test_transient_refusal_retries_once_and_sends(env, app_client, smtp_server, 
     assert len(handler.messages) == 1
     [line] = send_lines(log_lines(capsys))
     assert line["attempts"] == 2
+    assert line["retry_reason"] == "relay_rcpt_451"     # the hidden first failure is visible
 
 
-def test_transient_twice_fails_after_two_attempts(env, app_client, smtp_server, client_tls):
+def test_transient_twice_fails_after_two_attempts(env, app_client, smtp_server, client_tls, capsys):
     handler, port = smtp_server()
     env(port)
     handler.mail_script = [421, 421, 421]
@@ -508,6 +509,16 @@ def test_transient_twice_fails_after_two_attempts(env, app_client, smtp_server, 
     assert r.get_json()["reason"] == "relay_mail_421"
     assert len(handler.mail_from) == 2
     assert handler.messages == []
+    [line] = send_lines(log_lines(capsys))
+    assert line["retry_reason"] == "relay_mail_421"
+
+
+def test_single_attempt_has_no_retry_reason(env, app_client, smtp_server, client_tls, capsys):
+    handler, port = smtp_server()
+    env(port)
+    assert post(app_client).status_code == 200
+    [line] = send_lines(log_lines(capsys))
+    assert line["attempts"] == 1 and "retry_reason" not in line
 
 
 def test_permanent_mail_from_refusal(env, app_client, smtp_server, client_tls):
@@ -613,7 +624,7 @@ def test_logs_never_carry_body_subject_or_address(env, app_client, smtp_server, 
     for record in sends:
         assert set(record) <= {"severity", "event", "message", "outcome", "reason", "kind",
                                "recipient_count", "recipient_domains", "attempts",
-                               "duration_ms", "smtp_code", "smtp_reply", "message_id",
+                               "retry_reason", "duration_ms", "smtp_code", "smtp_reply", "message_id",
                                "http_status"}
         assert record["message"].startswith(("SEND_EMAIL_SENT", "SEND_EMAIL_REFUSED",
                                              "SEND_EMAIL_FAILED"))

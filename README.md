@@ -71,6 +71,7 @@ Anything other than 200 takes the flow's Failure exit.
 
 Each call writes one JSON line: `event=send_email`, `outcome` (`sent` / `refused` / `failed`),
 `reason`, `kind`, `recipient_count`, `recipient_domains` (domains only), `attempts`,
+`retry_reason` (why the first attempt failed, when there was a second),
 `duration_ms`, `smtp_code`, `smtp_reply` (the relay's own reply text), `message_id`, `http_status`,
 and a `message` starting `SEND_EMAIL_SENT`, `SEND_EMAIL_REFUSED` or `SEND_EMAIL_FAILED`. Severity is
 INFO / WARNING / ERROR. **The body, the subject and full addresses are never logged.**
