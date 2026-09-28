@@ -1,0 +1,28 @@
+# This file is NOT what builds or deploys the service. The continuous-deployment
+# trigger was created by the Cloud Run "Connect repository" flow and runs its own
+# inline build config (Dockerfile build, push, deploy) on every push to main.
+# The file is kept to match the other service repos and for a manual build.
+# Env vars, memory, and request timeout are set on the Cloud Run revision
+# (gcloud run services update), and secrets come from Secret Manager, never here.
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - us-east1-docker.pkg.dev/$PROJECT_ID/webhook-repo/send-email:$COMMIT_SHA
+      - .
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - us-east1-docker.pkg.dev/$PROJECT_ID/webhook-repo/send-email:$COMMIT_SHA
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - send-email
+      - --image=us-east1-docker.pkg.dev/$PROJECT_ID/webhook-repo/send-email:$COMMIT_SHA
+      - --region=us-east1
+      - --allow-unauthenticated
+images:
+  - us-east1-docker.pkg.dev/$PROJECT_ID/webhook-repo/send-email:$COMMIT_SHA
